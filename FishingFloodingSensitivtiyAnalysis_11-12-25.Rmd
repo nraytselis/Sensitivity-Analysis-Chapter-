@@ -197,7 +197,7 @@ sandra_plot_multiscatter = function (data, N, Y, params, smpl = NULL)
 
 ```
 
-```{r sensobol graphs}
+```{r sensobol graphs, fig.show = 'hold'} 
 N <- 2^13 #number of parameter combinations (recommendation from paper outlining the sensobol package)
 pars <- c( "ImmigrationPeriod", "ImmigrationRate", "FishingRate") # Choose parameters of interest
 matrices <- c("A", "B", "AB", "BA") #recommendation from paper for specific analysis of interest (variation partitioning approach)
@@ -250,9 +250,55 @@ for (output in c("mean_L3F", "mean_I")) {
   print(p2)
 }
 
+indL3F <- sobol_indices(matrices = matrices, Y = df$mean_L3F, N = N, params = pars, 
+                     first = first, total = total, order = order, boot = TRUE, R = R,
+                     parallel = "no", type = type, conf = conf)
+
+indL3F
+
+indI <- sobol_indices(matrices = matrices, Y = df$mean_I, N = N, params = pars, 
+                     first = first, total = total, order = order, boot = TRUE, R = R,
+                     parallel = "no", type = type, conf = conf)
+
+indI
+
+toplot.L3F <- subset(indL3F$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate")
+toplot.I <- subset(indI$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate")
 
 ```
 
+```{r sobol indices graphs, fig.show = 'hold'}
+#look at plots
+plot(indL3F)
+plot(indI)
+
+#make plots nicer
+indL3F <- ggplot(toplot.L3F, aes(x=parameters, y=original, fill=sensitivity)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  scale_fill_manual(name = "Effects", labels = c("Individual", "Total"), values=c("grey",
+                             "gray42")) +
+  geom_linerange(aes(ymin=original-std.error, ymax=original+std.error), linewidth= 1.5,
+                 position=position_dodge(.9)) +
+   theme(legend.position = "top", legend.justification = "center") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0,0)) +
+  labs(y = "Index Value", x = "") + ggtitle("L3s in Fish")
+
+indL3F
+
+indI <- ggplot(toplot.I, aes(x=parameters, y=original, fill=sensitivity)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  scale_fill_manual(name = "Effects", labels = c("Individual", "Total"), values=c("grey",
+                             "gray42")) +
+  geom_linerange(aes(ymin=original-std.error, ymax=original+std.error), linewidth= 1.5,
+                 position=position_dodge(.9)) +
+   theme(legend.position = "top", legend.justification = "center") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0,0)) +
+  labs(y = "Index Value", x = "") + ggtitle("Infectious Copepods")
+
+indI 
+
+
+```
 
 
 
