@@ -1,0 +1,261 @@
+---
+title: "Sensitivity Analysis"
+output: html_document
+date: "2025-11-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load required packages}
+library(ggplot2)
+library(cowplot)
+theme_set(theme_cowplot()) # Makes the ggplot look nicer (says Dave)
+library(tidyverse)
+library(tidyr)
+library(patchwork)
+library(dplyr)
+library(deSolve)
+library(caTools) #this package is for AUC calculations
+library(sensobol)
+library(data.table)
+library(foreach)
+library(parallel)
+library(doParallel)
+
+```
+
+
+##Load model and compile from C
+```{r load_model}
+# compile model from C definition
+setwd("~/Desktop/Rscripts/Data/Fish/")
+try(dyn.unload("~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model.so")) # unLoad dll, so for Mac
+system("R CMD SHLIB ~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model.c")
+dyn.load("~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model.so") # load dll
+```
+
+```{r set up the model}
+setwd("~/Desktop/Rscripts/Data/Fish")
+chainsA <- readRDS("Joint_GW_full_A2.RDA")
+chainsB <- readRDS("Joint_GW_full_B2.RDA")
+chainsC <- readRDS("Joint_GW_full_C2.RDA")
+
+fishchains = c(chainsA,chainsB,chainsC)
+
+get_best_fit = function(chain.list){
+  L = length(chain.list)
+  chain.scores = numeric()
+  for(i in 1:L){
+    chain.scores[i] = max(chain.list[[i]]$log.p)
+  }
+  list(chain.list[[which.max(chain.scores)]]$samples[which.max(chain.list[[which.max(chain.scores)]]$log.p),],
+       chain.list[[which.max(chain.scores)]]$cov.jump)
+  
+}
+
+parameters = get_best_fit(fishchains)[[1]]
+variances = get_best_fit(fishchains)[[2]] 
+
+parameters["latent_stages"] = 60
+parameters["latent_rate"] = 4.3
+parameters["lambda"] = 1.3
+parameters["d_W"] = 0.01 #on average GW in fish live 100 days 
+parameters["d_F"] = 0
+parameters["convEff"] = 0 #how many fish can you build by eating one adult, temper for nauplii and juveniles (mass of n/mass over a)
+parameters["ImmigrationRate"] = 0.375/50 #fish per liter per day 
+parameters["FishingRate"] = 0.143 #fish fished per liter per day (fishing effort) - the average fish is caught after 1 week
+parameters["ImmigrationPeriod"] = 50
+
+Exposed_names = paste0("E", 1:parameters["latent_stages"])
+Exposed_values = rep(0, times=parameters["latent_stages"])
+names(Exposed_values) = Exposed_names
+Exposed_values
+Inits = c(N = 7500, J = 6000, A = 700, Exposed_values, I = 0, Preds = 0,L3F = 0)/15
+
+timespan <- seq(0, 365, by = 1)
+
+sim1 = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 1e6)
+```
+
+```{r plot population dynamics}
+#create a data frame from simulation output for graphing 
+#check that simulation is doing what we expect 
+
+fish = dim(sim1)[1]
+
+PARAM = rep(colnames(sim1)[-1], each=fish)
+Jul.date = rep(sim1[,1], times = length(colnames(sim1)[-1]))
+Counts = c(sim1[,-1])
+
+prediction.df = data.frame(PARAM, Jul.date, Counts)
+
+
+p.plot <- ggplot(data=prediction.df, aes(x=Jul.date, y=Counts, group=PARAM, colour=PARAM)) + 
+         geom_line(size = 1.4) + labs(y = "Copepods", x = "Julian Date") 
+
+p.plot
+
+```
+```{r set new plot functions for sensobol}
+#function sandra_plot_scatter alters the graph output of the sensobol function to be more visually pleasing to Sandra
+#run this before running sensobol 
+
+library(ggplot2)
+
+plot_names <- c('ImmigrationPeriod' = "ImmigrationPeriod",
+                'ImmigrationRate' = "ImmigrationRate",
+                'FishingRate' = "FishingRate")
+
+axis_titles <- data.frame(
+  variable = c("ImmigrationPeriod", "ImmigrationRate", "FishingRate"),
+  axis_title = c("Fold increase in \n Immigration Period", "Fold increase in \n Immigration Rate", "Fold increase in \n Fishing Rate")
+)
+
+
+sandra_plot_scatter = function (data, N, Y, params, method = "point", size = 0.7, 
+  alpha = 0.2) 
+{
+  value <- y <- NULL
+  minY <- min(Y)
+  print(minY)
+  dt <- data.table::data.table(cbind(data, Y))[1:N]
+  colnames(dt)[length(colnames(dt))] <- "y"
+  out <- data.table::melt(dt, measure.vars = params)
+  gg <- ggplot2::ggplot(out, ggplot2::aes(value, y)) + 
+    ggplot2::facet_wrap(~variable, scales = "free_x", labeller = as_labeller(plot_names, default = label_parsed))  + 
+    ggplot2::labs(x = NULL, y = "Mean infection prevalence curve") + 
+    ggplot2::theme_bw() + 
+    ggplot2::theme(panel.grid.major = ggplot2::element_blank(),
+                   panel.spacing = unit(1.25, "lines"), #add more space between panels
+                  panel.grid.minor = ggplot2::element_blank(), legend.background = ggplot2::element_rect(fill = "transparent", 
+                  color = NA), legend.key = ggplot2::element_rect(fill = "transparent", 
+                  color = NA), strip.background = ggplot2::element_rect(fill = "white"), 
+                  strip.text = element_text(size = 14), legend.position = "top",
+                  plot.margin = unit(c(.5,.1,.75,.5), "cm"),
+                  axis.title=element_text(size=14), axis.text = element_text(size = 12)) + 
+    ggplot2::geom_text(data = axis_titles, aes(label = axis_title), size = 4.5, 
+                       x= c(min(dt$ImmigrationPeriod) + diff(range(dt$ImmigrationPeriod))/2, min(dt$ImmigrationRate) + diff(range(dt$ImmigrationRate))/2, min(dt$FishingRate) + diff(range(dt$FishingRate))/2) ,  #centers x axis labels for individual graphs, variables hardcoded, need to change if using diff ones
+                       y= minY - diff(range(Y))/4, color='black') + # need to change y to the minimal value - some divider x Y's range
+    coord_cartesian(clip="off")
+  if (method == "point") {
+    gg <- gg + ggplot2::geom_point(size = size, alpha = alpha) + 
+      ggplot2::stat_summary_bin(fun = "mean", geom = "point", 
+        colour = "red", size = 1.2)
+  }
+  else if (method == "bin") {
+    gg <- gg +  ggplot2::geom_hex(bins = 35) + scale_fill_viridis_c() + #scale_colour_gradient2(palette = "viridis") +
+      ggplot2::stat_summary_bin(fun = "mean", geom = "line", colour = "red", size = 1.2)
+  }
+  else {
+    stop("Method should be either point or bin")
+  }
+  return(gg)
+}
+
+
+#another mod to graphing defaults 
+
+library(RColorBrewer)
+
+sandra_plot_multiscatter = function (data, N, Y, params, smpl = NULL) 
+{
+    xvar <- yvar <- x <- y <- NULL
+    dt <- data.table::data.table(data)
+    out <- t(utils::combn(params, 2))
+    da <- list()
+    for (i in 1:nrow(out)) {
+        cols <- out[i, ]
+        da[[i]] <- cbind(dt[1:N, .SD, .SDcols = (cols)], cols[1], 
+            cols[2], Y[1:N])
+        data.table::setnames(da[[i]], colnames(da[[i]]), c("xvar", 
+            "yvar", "x", "y", "output"))
+    }
+    output <- data.table::rbindlist(da)
+    if (is.null(smpl) == FALSE) {
+        if (is.numeric(smpl) == FALSE) {
+            stop("smpl should be a number")
+        }
+        else {
+            output <- output[, .SD[sample(.N, min(smpl, .N))], 
+                by = list(x, y)]
+        }
+    }
+    gg <- ggplot2::ggplot(output, ggplot2::aes(xvar, yvar, color = output)) + 
+        ggplot2::geom_point(size = 0.5) + ggplot2::scale_colour_gradientn(colours = grDevices::hcl.colors(7, palette = "viridis")) + 
+        ggplot2::scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) + 
+        ggplot2::scale_y_continuous(breaks = scales::pretty_breaks(n = 3)) + 
+        ggplot2::facet_wrap(x ~ y, scales = "free") + ggplot2::theme_bw() + 
+        ggplot2::labs(x = "", y = "") + ggplot2::theme(panel.grid.major = ggplot2::element_blank(), 
+        panel.grid.minor = ggplot2::element_blank(), legend.background = ggplot2::element_rect(fill = "transparent", 
+            color = NA), legend.key = ggplot2::element_rect(fill = "transparent", 
+            color = NA), strip.background = ggplot2::element_rect(fill = "white"), 
+        legend.position = "top")
+    return(gg)
+}
+
+```
+
+```{r sensobol graphs}
+N <- 2^13 #number of parameter combinations (recommendation from paper outlining the sensobol package)
+pars <- c( "ImmigrationPeriod", "ImmigrationRate", "FishingRate") # Choose parameters of interest
+matrices <- c("A", "B", "AB", "BA") #recommendation from paper for specific analysis of interest (variation partitioning approach)
+first <- total <- "azzini"
+order <- "second" #what level of interactions are allowed 
+R<-10^3 
+type<-"percent"
+conf<-0.95
+
+mat <- sobol_matrices(matrices=matrices, N = N, params = pars, order = order) #creates different matrices with parameter combinations (based on quantiles)
+
+# Choose their ranges
+  #you have to pick the uniform because of how the sobol sensitivity is formulated 
+mat[, "ImmigrationPeriod"] <- qunif(mat[, "ImmigrationPeriod"], 10, 100) #units in days 
+mat[, "ImmigrationRate"] <- qunif(mat[, "ImmigrationRate"], 0.025/50, 0.375/50) #fish per liter per day
+mat[, "FishingRate"] <- qunif(mat[, "FishingRate"], 0.0333, 0.143) #fish fished per liter per day (fishing effort) - the average fish is caught between 1 week and 1 month
+
+
+sobol_fxn = function(ImmigrationPeriod,ImmigrationRate,FishingRate) { # Runs the model and calculates area under the prevalence curve (similar to a forloop)
+  parameters["ImmigrationPeriod"] = ImmigrationPeriod; parameters["ImmigrationRate"] = ImmigrationRate; parameters["FishingRate"] = FishingRate;
+  sim = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 500000)
+  return(list(c(mean_L3F = mean(sim[,"L3F"]), mean_I = mean(sim[,"I"])))) 
+} 
+
+sobol_fxn(ImmigrationPeriod = parameters["ImmigrationPeriod"],ImmigrationRate = parameters["ImmigrationRate"], FishingRate = parameters["FishingRate"])
+
+sobol_mapply_fxn = function(dt){
+  return(mapply(sobol_fxn, dt[, 1], dt[, 2], dt[, 3])) } #each column in the dataframe is a parameter vector 
+
+# mat = our inputs
+# result = our model outputs
+result = sobol_mapply_fxn(mat)
+df = as.data.frame(do.call(rbind, result))
+full.dt = data.table(mat, df) 
+
+plot_uncertainty(Y = full.dt$mean_L3F, N = N) + labs(y = "Mean L3F", x = "y")
+plot_uncertainty(Y = full.dt$mean_I, N = N) + labs(y = "Mean I", x = "y")
+
+
+
+for (output in c("mean_L3F", "mean_I")) {
+  Yvals <- full.dt[[output]]
+  
+  # Scatter/facet plot
+  p1 <- sandra_plot_scatter(data = full.dt, N = N, Y = Yvals, params = pars, method = "bin")
+  print(p1)
+  
+  # Pairwise multiscatter
+  p2 <- sandra_plot_multiscatter(data = full.dt, N = N, Y = Yvals, params = pars, smpl = 2^13)
+  print(p2)
+}
+
+
+```
+
+
+
+
+
+
+
