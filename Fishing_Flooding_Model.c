@@ -1,7 +1,7 @@
 /* file Fishing_Flooding_Model.c */
 #include <R.h>
 #include <math.h>
-static double parms[37];
+static double parms[38];
 
 #define N0_F parms[0]
 #define J0_F parms[1]
@@ -40,11 +40,12 @@ static double parms[37];
 #define ImmigrationRate parms[34]
 #define FishingRate parms[35]
 #define ImmigrationPeriod parms[36] 
+#define L1day parms[37]
 
 /* initializer */
 void initmod(void (* odeparms)(int *, double *))
 {
-int N=37;
+int N=38;
 odeparms(&N, parms);
 }
 
@@ -64,7 +65,12 @@ void compute_derivatives(int *neq, double *t, double *y, double *ydot, double *y
     double N = y[0];
     double J = y[1];
     double A = y[2];
-    const double *Es = &y[3];
+    double Es[latent_stages_local];
+
+
+for (int i = 0; i < latent_stages_local; i++)
+        Es[i] = y[3+i];
+
     double I = y[3 + latent_stages_local];
     double Preds = y[4 + latent_stages_local];
     double L3F = y[5 + latent_stages_local];
@@ -127,13 +133,17 @@ void compute_derivatives(int *neq, double *t, double *y, double *ydot, double *y
 
 /* ^ Iterates from index 0 up to latent_stages_local - 1, calculating a new value for each index in the latent_progression array based on a constant rate and the corresponding value from the Es array.*/ 
 
+
+	double lambdapulse = (tmod >= L1day && tmod < L1day + 1) ? lambda : 0;
+
+
     // Compute derivatives
     ydot[0] = b_M*(A + sumEs+ I)/2*exp(-comp_b/VOL * crowd) - (m_N_c + d_N_c)*N - cann*(A + I + sumEs)*N - Pred_N*N;
     ydot[1] = m_N_c*N - (m_J_c + d_J_c)*J - Pred_J*J;
-    ydot[2] = m_J_c*J - d_A_c*A - lambda*A - Pred_A*A;
+    ydot[2] = m_J_c*J - d_A_c*A - lambdapulse*A - Pred_A*A;
 
-    for (int i = 0; i <= latent_stages_local; i++) {
-        double gain = (i == 0) ? lambda*A : latent_progression[i-1];     
+    for (int i = 0; i < latent_stages_local; i++) {
+        double gain = (i == 0) ? lambdapulse*A : latent_progression[i-1];     
 /* ?: means if else. In the first loop iteration (i = 0),gain is computed as lambda multiplied by A. For later iterations, gain comes from the previous element in the array latent_progression */ 
 
         ydot[3+i] = -latent_progression[i] - d_A_c*Es[i] + gain - Pred_A*Es[i];
