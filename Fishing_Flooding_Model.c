@@ -56,22 +56,22 @@ double sum_array(const double *arr, int n) {
     return s;
 } 
 
-/* ^ this is used to compute double sumEs = sum_array(Es, latent_stages_local); */ 
+/* ^ this is used to compute double sumEs = sum_array(Es, latent_stages_local); 0.000001*/ 
 
 void compute_derivatives(int *neq, double *t, double *y, double *ydot, double *yout, int *ip) {
     int latent_stages_local = (int)latent_stages;  
     double VOL = 1.0;
 
-    double N = y[0];
-    double J = y[1];
-    double A = y[2];
+    double N = fmax(y[0], 0); 
+    double J = fmax(y[1], 0);
+    double A = fmax(y[2], 0);
     double Es[latent_stages_local];
 
 
 for (int i = 0; i < latent_stages_local; i++)
-        Es[i] = y[3+i];
+        Es[i] = fmax(y[3+i], 0);
 
-    double I = y[3 + latent_stages_local];
+    double I = fmax(y[3 + latent_stages_local], 0);
     double Preds = y[4 + latent_stages_local];
     double L3F = y[5 + latent_stages_local];
     double HEF = y[6 + latent_stages_local];
@@ -102,13 +102,13 @@ for (int i = 0; i < latent_stages_local; i++)
 
 	double s = 0.1;
     
-    double immigration =  ImmigrationRate/2*(erf((tmod - 100)/s) - erf((tmod - (100+ImmigrationPeriod))/s));
+    double immigration =  ImmigrationRate/2*(erf((tmod - 1)/s) - erf((tmod - (1+ImmigrationPeriod))/s));
 
-/*double immigration = (tmod > 100 && tmod < 100 + ImmigrationPeriod) ? ImmigrationRate : 0; */ 
+/*double immigration = (tmod > 1 && tmod < 1 + ImmigrationPeriod) ? ImmigrationRate : 0; */ 
 	
 /*current day of the year (tmod) is greater than 100 and less than 100 plus the duration of the immigration period, and assigns to immigration variable if the condition is true.*/ 
     
-    double fishing = FishingRate - FishingRate/2*(erf((tmod - 100)/s) - erf((tmod - (100+ImmigrationPeriod))/s));
+    double fishing = FishingRate - FishingRate/2*(erf((tmod - 1)/s) - erf((tmod - (1+ImmigrationPeriod))/s));
 
 /*double fishing = (tmod <= 100 || tmod >= 100 + ImmigrationPeriod) ? FishingRate : 0;*/
 	
