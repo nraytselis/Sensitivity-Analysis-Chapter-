@@ -1,0 +1,954 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-04-08"
+---
+
+---
+title: "Sensitivity Analysis C"
+output: html_document
+date: "2026-02-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "Sensitivity Analysis"
+output: html_document
+date: "2025-11-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load required packages}
+library(ggplot2)
+library(cowplot)
+theme_set(theme_cowplot()) # Makes the ggplot look nicer (says Dave)
+library(tidyverse)
+library(tidyr)
+library(patchwork)
+library(dplyr)
+library(deSolve)
+library(caTools) #this package is for AUC calculations
+library(sensobol)
+library(data.table)
+library(foreach)
+library(parallel)
+library(doParallel)
+library(Matrix)
+
+
+
+```
+
+
+##Load model and compile from C
+```{r load_model}
+# compile model from C definition
+setwd("~/Desktop/Rscripts/Data/Fish/")
+try(dyn.unload("~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model.so")) # unLoad dll, so for Mac
+system("R CMD SHLIB ~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model.c")
+dyn.load("~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model.so") # load dll
+```
+##Load model and compile from C
+```{r load_model}
+# compile model from C definition
+setwd("~/Desktop/Rscripts/Data/Fish/")
+try(dyn.unload("~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model_copy.so")) # unLoad dll, so for Mac
+system("R CMD SHLIB ~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model_copy.c")
+dyn.load("~/Desktop/Rscripts/Data/Fish/Fishing_Flooding_Model_copy.so") # load dll
+```
+
+
+
+
+```{r}
+#bring in mcmc chains
+setwd("~/Desktop/Rscripts/Data/Fish")
+# get_best_fit = function(chain.list){
+#   L = length(chain.list)
+#   chain.scores = numeric()
+#   for(i in 1:L){
+#     chain.scores[i] = max(chain.list[[i]]$log.p)
+#   }
+#   list(chain.list[[which.max(chain.scores)]]$samples[which.max(chain.list[[which.max(chain.scores)]]$log.p),],
+#        chain.list[[which.max(chain.scores)]]$cov.jump)
+#   
+# }
+# 
+# 
+# #bring in 24 mcmc chains
+# #bring in 24 mcmc chains
+# setwd("~/Desktop/Rscripts/Data/Fish")
+# chainsA <- readRDS("Joint_GW_full_A2_2.RDA")
+# chainsB <- readRDS("Joint_GW_full_B2_2.RDA")
+# chainsC <- readRDS("Joint_GW_full_C2_2.RDA")
+# 
+# #remove chains that did not converge
+# chainsAconverged = chainsA[-c(1:3)]
+# chainsBconverged = chainsB[-c(2)]
+# chainsCconverged = chainsC[-c(1,6,7)]
+# 
+# #combine converged chains
+# fishchains = c(chainsAconverged,chainsBconverged,chainsCconverged)
+# 
+# #combine converged chains
+# fishchains = c(chainsAconverged,chainsBconverged,chainsCconverged)
+# 
+# #get best fit
+# get_best_fit = function(chain.list){
+#   L = length(chain.list)
+#   chain.scores = numeric()
+#   for(i in 1:L){
+#     chain.scores[i] = max(chain.list[[i]]$log.p)
+#   }
+#   list(chain.list[[which.max(chain.scores)]]$samples[which.max(chain.list[[which.max(chain.scores)]]$log.p),],
+#        chain.list[[which.max(chain.scores)]]$cov.jump,
+#        max(chain.list[[which.max(chain.scores)]]$log.p))
+#   
+# }
+# 
+# pomp_parameter_trans = function(x){
+#   log_par_names = c("comp_d", "comp_b", "comp_m", "cann")
+#   x[log_par_names] = exp(x[log_par_names])
+#   x
+# }
+# pomp_parameter_backtrans = function(x){
+#   log_par_names = c("comp_d", "comp_b", "comp_m", "cann")
+#   x[log_par_names] = log(x[log_par_names])
+#   x
+# }
+# 
+# samps = get_best_fit(fishchains)
+# parameters = pomp_parameter_trans(samps[[1]])
+# 
+# saveRDS(parameters, file="simpars.RDA")
+
+parameters = readRDS("simpars.RDA")
+
+#hist(data.frame(fishchains[[4]]$samples)$d_A)
+
+#variances = get_best_fit(fishchains)[[2]] 
+
+parameters["latent_stages"] = 60
+parameters["latent_rate"] = 4.3
+parameters["lambda"] = 0.032*10
+parameters["d_W"] = 0.01 #on average GW in fish live 100 days 
+parameters["d_F"] = 0
+parameters["convEff"] = 0 #how many fish can you build by eating one adult, temper for nauplii and juveniles (mass of n/mass over a)
+parameters["ImmigrationRate"] =  0.05/50 #fish per liter per day 
+parameters["FishingRate"] = 0.05 #fish fished per liter per day (fishing effort) - the average fish is caught after 1 week (1/7)
+parameters["ImmigrationPeriod"] = 50
+parameters["L1day"] = 150
+
+#mat[, "ImmigrationPeriod"] <- qunif(mat[, "ImmigrationPeriod"], 10, 182) #units in days 
+#mat[, "ImmigrationRate"] <- qunif(mat[, "ImmigrationRate"], 0.025/50, 0.5/50) #fish per liter per day
+#mat[, "FishingRate"] <- qunif(mat[, "FishingRate"], 0, 0.143)
+
+
+
+parameters = unlist(parameters)
+
+
+Exposed_names = paste0("E", 1:parameters["latent_stages"])
+Exposed_values = rep(0, times=parameters["latent_stages"])
+names(Exposed_values) = Exposed_names
+Exposed_values
+
+#E1 <- Exposed_values[1]
+#Exposed_values = Exposed_values[2:60]
+
+Inits = c(N = 7500, J = 6000, A = 700, Exposed_values, I = 0, Preds = 0,L3F = 0, HEF = 0)/15
+timespan <- seq(0, 1825, by = 1)
+
+#####this new model runs so that introductions occur on day 150 and day 350 both within a single sim####
+
+sim1 = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model_copy", initfunc="initmod", maxsteps = 1e6)
+
+
+sim1Es = data.frame(rowSums(sim1[, c(5:64)])) 
+
+colnames(sim1Es) = "Es"
+
+sim1Esrow = sim1Es %>% mutate(time = row_number())
+
+ggplot(data = sim1Esrow, aes(x=time,y=Es)) + geom_line() + xlim(0,1000)
+
+
+sim1select = data.frame(sim1) %>% select(c(1:4,65:68))
+
+sim1Esrowwide = sim1Esrow %>% mutate(PARAM = "Es")
+
+colnames(sim1Esrowwide) = c("Counts","time","PARAM")
+
+sim1summarizedlong = data.frame(sim1select) %>%
+  pivot_longer(
+    cols = c(2:8),
+    names_to = "PARAM",
+    values_to = "Counts"
+  )
+
+sim1summarizedlong = bind_rows(sim1summarizedlong,sim1Esrowwide)
+
+
+#Add together columns for uninfected stages
+sim1NonInfectedCategory = sim1summarizedlong %>% pivot_wider(names_from = PARAM,values_from = Counts) %>%
+  mutate(NI=N+J+A) %>% select(c("time","NI","Preds","L3F","HEF","I","Es")) %>%
+  pivot_longer(cols = c("NI","Preds","L3F","HEF","I","Es"), names_to = "PARAM",values_to = "Counts")
+
+#multiple HEF, I, L3F, and Preds by 100, counts per 100L 
+
+# sim1rescaled <- sim1summarizedlong %>%
+#   mutate(
+#     Counts_per_100_L = case_when(
+#       PARAM %in% c("HEF", "I") ~ Counts * 100,
+#       PARAM %in% c("Preds", "L3F") ~ Counts * 1000,
+#       TRUE ~ Counts
+#     )
+#   )
+
+sim1rescaled <- sim1NonInfectedCategory %>%
+  mutate(
+    Counts_per_100_L = case_when(
+      PARAM %in% c("NI") ~ Counts/1000,
+      PARAM %in% c("Es") ~ Counts/100,
+      PARAM %in% c("Preds") ~ Counts * 100,
+      TRUE ~ Counts
+    )
+  )
+
+
+
+ranges <- data.frame(
+  xmin = c(1, 366, 731, 1096),
+  xmax = c(50, 415, 780, 1145)
+)
+
+library(RColorBrewer)
+set3_colors <- brewer.pal(12, "Set3")
+my_pal <- set3_colors[c(1,4,5,6,7,10)]
+
+sim150AND350 = ggplot(data = sim1rescaled,
+                  aes(x = time, y = Counts_per_100_L,
+                      group = PARAM, colour = PARAM)) + geom_rect(
+    data = ranges,
+    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+    fill = "grey80",
+    alpha = 0.4,
+    inherit.aes = FALSE
+  ) +
+  geom_line(size = 1.4) +
+  labs(y = "Counts", x = "time") +
+  xlim(0,500) +
+  scale_color_manual(
+     values = my_pal,
+    labels = c(
+      expression('Exposed Copepods, 0.01 L'^-1),
+      expression('Cumulative Fish Exposure, L'^-1),
+      expression('L3 Infected Copepods, L'^-1),
+      expression('L3 Infected Fish, L'^-1),
+      expression('Non-Infected Copepods, 0.001 L'^-1),
+      expression('Fish Predators, 100 L'^-1)
+    )
+  ) + geom_segment(aes(x=350, y=0.75, xend=350, yend=0.5), color = "black", arrow = arrow(length=unit(0.25, 'cm'))) +
+  geom_segment(aes(x=150, y=0.75, xend=150, yend=0.5), color = "black",arrow = arrow(length=unit(0.25, 'cm'))) + labs(x = "Time (days)",y = "Counts" , color = "Copepod and Fish Stages") + theme(base_size = 25)
+
+####for publication####
+sim150AND350
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+L1Day150 = ggplot(data = sim1rescaled,
+                  aes(x = time, y = Counts_per_100_L,
+                      group = PARAM, colour = PARAM)) + geom_rect(
+    data = ranges,
+    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+    fill = "grey80",
+    alpha = 0.4,
+    inherit.aes = FALSE
+  ) +
+  geom_line(size = 1.4) +
+  labs(y = "Counts", x = "time") +
+  xlim(325, 1170) +
+  scale_color_manual(
+     values = pal_colors,
+    labels = c(
+      expression('Adults, L'^-1),
+      expression('Exposed, L'^-1),
+      expression('Cummulative Fish Exposure, 100 L'^-1),
+      expression('L3 Infected Copepods, 100 L'^-1),
+      expression('Juveniles, L'^-1),
+      expression('L3 Infected Fish, 100 L'^-1),
+      expression('Nauplii, L'^-1),
+      expression('Fish Predators,1000 L'^-1)
+    )
+  ) 
+
+L1Day150
+
+#sim for day 350
+parameters["L1day"] = 15
+
+#mat[, "ImmigrationPeriod"] <- qunif(mat[, "ImmigrationPeriod"], 10, 182) #units in days 
+#mat[, "ImmigrationRate"] <- qunif(mat[, "ImmigrationRate"], 0.025/50, 0.5/50) #fish per liter per day
+#mat[, "FishingRate"] <- qunif(mat[, "FishingRate"], 0, 0.143)
+
+
+
+parameters = unlist(parameters)
+
+
+Exposed_names = paste0("E", 1:parameters["latent_stages"])
+Exposed_values = rep(0, times=parameters["latent_stages"])
+names(Exposed_values) = Exposed_names
+Exposed_values
+
+#E1 <- Exposed_values[1]
+#Exposed_values = Exposed_values[2:60]
+
+Inits = c(N = 7500, J = 6000, A = 700, Exposed_values, I = 0, Preds = 0,L3F = 0, HEF = 0)/15
+timespan <- seq(0, 1825, by = 1)
+
+sim2 = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 1e6)
+
+sim2Es = data.frame(rowSums(sim2[, c(5:64)])) 
+
+colnames(sim2Es) = "Es"
+
+sim2Esrow = sim2Es %>% mutate(time = row_number())
+
+ggplot(data = sim2Esrow, aes(x=time,y=Es)) + geom_line() + xlim(0,1000)
+
+
+sim2select = data.frame(sim2) %>% select(c(1:4,65:68))
+
+sim2Esrowwide = sim2Esrow %>% mutate(PARAM = "Es")
+
+colnames(sim2Esrowwide) = c("Counts","time","PARAM")
+
+sim2summarizedlong = data.frame(sim2select) %>%
+  pivot_longer(
+    cols = c(2:8),
+    names_to = "PARAM",
+    values_to = "Counts"
+  )
+
+sim2summarizedlong = bind_rows(sim2summarizedlong,sim2Esrowwide)
+
+#multiple HEF, I, L3F, and Preds by 100, counts per 100L 
+
+sim2rescaled <- sim2summarizedlong %>%
+  mutate(
+    Counts_per_100_L = case_when(
+      PARAM %in% c("HEF", "I", "L3F") ~ Counts * 100,
+      PARAM == "Preds" ~ Counts * 1000,
+      TRUE ~ Counts
+    )
+  )
+
+
+library(RColorBrewer)
+ggplot(data = sim2rescaled,
+                  aes(x = time, y = Counts_per_100_L,
+                      group = PARAM, colour = PARAM)) + geom_rect(
+    data = ranges,
+    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+    fill = "grey80",
+    alpha = 0.4,
+    inherit.aes = FALSE
+  ) +
+  geom_line(size = 1.4) +
+  labs(y = "Counts", x = "time") + 
+  xlim(366, 730) 
+
+
++
+  scale_color_manual(
+    values = pal_colors,
+    labels = c(
+      expression('Adults, L'^-1),
+      expression('Exposed, L'^-1),
+      expression('Cummulative Fish Exposure, 100 L'^-1),
+      expression('L3 Infected Copepods, 100 L'^-1),
+      expression('Juveniles, L'^-1),
+      expression('L3 Infected Fish, 100 L'^-1),
+      expression('Nauplii, L'^-1),
+      expression('Fish Predators,1000 L'^-1)
+    )
+  )
+
+
+L1Day350
+
+library(ggpubr)
+
+ggarrange(L1Day150,L1Day350,
+           nrow=2,ncol=1,common.legend=TRUE,
+          legend = "right")
+
+
+
+
+
+# sim1summarizedlongstages <- sim1summarizedlong %>% 
+#   filter(PARAM %in% c("N", "J", "A", "Es", "I"))
+# 
+# sim1summarizedlongstagessummed <- sim1summarizedlongstages %>%
+#   filter(PARAM %in% c("A", "Es", "I")) %>%
+#   group_by(time) %>%
+#   summarise(AllAdults = sum(Counts, na.rm = TRUE), .groups = "drop")
+# 
+# colnames(sim1summarizedlongstagessummed) = c("time","Counts")
+# 
+# sim1summarizedlongstagessummed = sim1summarizedlongstagessummed %>% mutate(PARAM = "AllAdults(A+Es+I)")
+# 
+# sim1summarizedlongstages = sim1summarizedlongstages %>% filter(PARAM %in% c("N","J")) 
+# 
+# sim1summarizedlongstagessummed = bind_rows(sim1summarizedlongstagessummed,sim1summarizedlongstages)
+# 
+# sim1summarizedlonginfections <- sim1summarizedlong %>% 
+#   filter(PARAM %in% c("I","L3F","HEF","Preds"))
+# 
+# 
+# p1 = ggplot(data=sim1summarizedlongstagessummed, aes(x=time, y=pmax(Counts,1e-6), group=PARAM, colour=PARAM)) + 
+#          geom_line(size = 1.4) + labs(y = "Counts", x = "time") + xlim(0,730) 
+# 
+# p2 = ggplot(data=sim1summarizedlonginfections, aes(x=time, y=pmax(Counts,1e-6), group=PARAM, colour=PARAM)) + 
+#          geom_line(size = 1.4) + labs(y = "Counts", x = "time") + xlim(0,730) #+ xlim(0,365) + ylim(0,3)
+# 
+# library(ggpubr)
+# 
+# ggarrange(p1, p2, ncol = 1, nrow = 2, legend = "right")
+# 
+# 
+# library(patchwork)
+# (p1 / p2) +
+#   plot_layout(guides = "collect") &
+#   theme(legend.position = "right") &
+#   scale_color_discrete(name = "State Variable")
+
+# 
+# plot(I~ time, sim1)
+# plot(E1~ time, sim1)
+# plot(A~ time, sim1)
+# 
+# plot(Preds~ time, sim1)
+# 
+# totalcopes = data.frame(rowSums(sim1[, c(2:65)]))
+# colnames(totalcopes) = "allcopes"
+# totalcopes = totalcopes %>% mutate(time = row_number())
+# 
+# ggplot(data = totalcopes, aes(x=time,y=allcopes)) + geom_line() + xlim(0,1000)
+
+
+```
+
+
+
+```{r plot population dynamics}
+#create a data frame from simulation output for graphing 
+#check that simulation is doing what we expect 
+
+sim1long = data.frame(sim1) %>%
+  pivot_longer(
+    cols = c(2:68),
+    names_to = "PARAM",
+    values_to = "Counts"
+  )
+
+
+#plot Es 
+sim1longEs = sim1long %>% filter(grepl("E", PARAM)) 
+sim1longI = sim1long %>% filter(grepl("I", PARAM)) 
+
+sim1longEs = sim1longEs %>% filter(PARAM != "HEF")
+
+data = rbind(sim1longEs,sim1longI)
+
+p.plot.Es <- ggplot(data=data, aes(x=time, y=Counts, group=PARAM, colour=PARAM)) + 
+         geom_line(size = 1.4) + labs(y = "Counts", x = "time") + xlim(0,150)
+
+p.plot.Es + xlim(0,20) + ylim(0,1) 
+
+
+#ggplot(data=data%>%filter(PARAM %in% c("I","E60")), aes(x=time, y=Counts, group=PARAM, colour=PARAM)) + 
+#         geom_line(size = 1.4) + labs(y = "Counts", x = "time") +xlim(0,15)
+
+
+```
+
+
+```{r set new plot functions for sensobol}
+#function sandra_plot_scatter alters the graph output of the sensobol function to be more visually pleasing to Sandra
+#run this before running sensobol 
+
+library(ggplot2)
+
+plot_names <- c('ImmigrationPeriod' = "ImmigrationPeriod",
+                'ImmigrationRate' = "ImmigrationRate",
+                'FishingRate' = "FishingRate",
+                'L1day' = "L1day")
+
+axis_titles <- data.frame(
+  variable = c("ImmigrationPeriod", "ImmigrationRate", "FishingRate","L1day"),
+  axis_title = c("Fold increase in \n Immigration Period", "Fold increase in \n Immigration Rate", "Fold increase in \n Fishing Rate","Fold increase in \n L1day")
+)
+
+
+sandra_plot_scatter = function (data, N, Y, params, method = "point", size = 0.7, 
+  alpha = 0.2) 
+{
+  value <- y <- NULL
+  minY <- min(Y)
+  print(minY)
+  dt <- data.table::data.table(cbind(data, Y))[1:N]
+  colnames(dt)[length(colnames(dt))] <- "y"
+  out <- data.table::melt(dt, measure.vars = params)
+  gg <- ggplot2::ggplot(out, ggplot2::aes(value, y)) + 
+    ggplot2::facet_wrap(~variable, scales = "free_x", labeller = as_labeller(plot_names, default = label_parsed))  + 
+    ggplot2::labs(x = NULL, y = "Mean density of infection") + 
+    ggplot2::theme_bw() + 
+    ggplot2::theme(panel.grid.major = ggplot2::element_blank(),
+                   panel.spacing = unit(1.25, "lines"), #add more space between panels
+                  panel.grid.minor = ggplot2::element_blank(), legend.background = ggplot2::element_rect(fill = "transparent", 
+                  color = NA), legend.key = ggplot2::element_rect(fill = "transparent", 
+                  color = NA), strip.background = ggplot2::element_rect(fill = "white"), 
+                  strip.text = element_text(size = 14), legend.position = "top",
+                  plot.margin = unit(c(.5,.1,.75,.5), "cm"),
+                  axis.title=element_text(size=14), axis.text = element_text(size = 12)) + 
+    ggplot2::geom_text(data = axis_titles, aes(label = axis_title), size = 4.5, 
+                       x= c(min(dt$ImmigrationPeriod) + diff(range(dt$ImmigrationPeriod))/2, min(dt$ImmigrationRate) + diff(range(dt$ImmigrationRate))/2, min(dt$FishingRate) + diff(range(dt$FishingRate))/2 + diff(range(dt$L1day))/2, min(dt$L1day) + diff(range(dt$L1day))/2),  #centers x axis labels for individual graphs, variables hardcoded, need to change if using diff ones
+                       y= minY - diff(range(Y))/4, color='black') + # need to change y to the minimal value - some divider x Y's range
+    coord_cartesian(clip="off")
+  if (method == "point") {
+    gg <- gg + ggplot2::geom_point(size = size, alpha = alpha) + 
+      ggplot2::stat_summary_bin(fun = "mean", geom = "point", 
+        colour = "red", size = 1.2)
+  }
+  else if (method == "bin") {
+    gg <- gg +  ggplot2::geom_hex(bins = 35) + scale_fill_viridis_c() + #scale_colour_gradient2(palette = "viridis") +
+      ggplot2::stat_summary_bin(fun = "mean", geom = "line", colour = "red", size = 1.2)
+  }
+  else {
+    stop("Method should be either point or bin")
+  }
+  return(gg)
+}
+
+
+#another mod to graphing defaults 
+
+library(RColorBrewer)
+
+sandra_plot_multiscatter = function (data, N, Y, params, smpl = NULL) 
+{
+    xvar <- yvar <- x <- y <- NULL
+    dt <- data.table::data.table(data)
+    out <- t(utils::combn(params, 2))
+    da <- list()
+    for (i in 1:nrow(out)) {
+        cols <- out[i, ]
+        da[[i]] <- cbind(dt[1:N, .SD, .SDcols = (cols)], cols[1], 
+            cols[2], Y[1:N])
+        data.table::setnames(da[[i]], colnames(da[[i]]), c("xvar", 
+            "yvar", "x", "y", "output"))
+    }
+    output <- data.table::rbindlist(da)
+    if (is.null(smpl) == FALSE) {
+        if (is.numeric(smpl) == FALSE) {
+            stop("smpl should be a number")
+        }
+        else {
+            output <- output[, .SD[sample(.N, min(smpl, .N))], 
+                by = list(x, y)]
+        }
+    }
+    gg <- ggplot2::ggplot(output, ggplot2::aes(xvar, yvar, color = output)) + 
+        ggplot2::geom_point(size = 0.5) + ggplot2::scale_colour_gradientn(colours = grDevices::hcl.colors(7, palette = "viridis")) + 
+        ggplot2::scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) + 
+        ggplot2::scale_y_continuous(breaks = scales::pretty_breaks(n = 3)) + 
+        ggplot2::facet_wrap(x ~ y, scales = "free") + ggplot2::theme_bw() + 
+        ggplot2::labs(x = "", y = "") + ggplot2::theme(panel.grid.major = ggplot2::element_blank(), 
+        panel.grid.minor = ggplot2::element_blank(), legend.background = ggplot2::element_rect(fill = "transparent", 
+            color = NA), legend.key = ggplot2::element_rect(fill = "transparent", 
+            color = NA), strip.background = ggplot2::element_rect(fill = "white"), 
+        legend.position = "top")
+    return(gg)
+}
+
+```
+
+
+```{r sensobol graphs, fig.show = 'hold',warning = NA} 
+N <- 2^13 #number of parameter combinations (recommendation from paper outlining the sensobol package)
+pars <- c( "ImmigrationPeriod", "ImmigrationRate", "FishingRate","L1day","d_W") # Choose parameters of interest
+matrices <- c("A", "B", "AB", "BA") #recommendation from paper for specific analysis of interest (variation partitioning approach)
+first <- total <- "azzini"
+order <- "second" #what level of interactions are allowed 
+R<-10^3 
+type<-"percent"
+conf<-0.95
+
+mat <- sobol_matrices(matrices=matrices, N = N, params = pars, order = "fourth") #creates different matrices with parameter combinations (based on quantiles)
+
+# Choose their ranges
+  #you have to pick the uniform because of how the sobol sensitivity is formulated 
+mat[, "ImmigrationPeriod"] <- qunif(mat[, "ImmigrationPeriod"], 10, 130) #units in days 
+mat[, "ImmigrationRate"] <- qunif(mat[, "ImmigrationRate"], 0.025/50, 0.5/50) #fish per liter per day
+mat[, "FishingRate"] <- qunif(mat[, "FishingRate"], 0, 0.143) #fish fished per liter per day (fishing effort) - the average fish is caught between 1 week and the fish are never caught 
+mat[, "L1day"] <- qunif(mat[, "L1day"], 0, 364) 
+mat[, "d_W"] <- qunif(mat[, "d_W"], 0, 0.1) 
+
+sobol_fxn = function(ImmigrationPeriod,ImmigrationRate,FishingRate,L1day,d_W) { # Runs the model and calculates area under the prevalence curve (similar to a forloop)
+parameters["ImmigrationPeriod"] = ImmigrationPeriod; parameters["ImmigrationRate"] = ImmigrationRate; parameters["FishingRate"] = FishingRate; parameters["L1day"] = L1day;parameters["d_W"] = d_W;
+  sim = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 500000)
+  
+  # Extract HEF values at the required days
+  hef_731  <- sim[sim[,"time"] == 731,  "HEF"] #first day of 3rd year
+  hef_1825 <- sim[sim[,"time"] == 1825, "HEF"] #last day of 5th year 
+  
+  HEF_diff <- hef_1825 - hef_731
+
+  # Select days 731–1825
+  sel <- sim[,"time"] >= 731 & sim[,"time"] <= 1825 # other way to do: sel <- 731:1825
+
+  #print(sel)
+  
+  #print(sim[sel, "I"])
+  
+
+return(list(c(
+    mean_L3F = mean(sim[sel, "L3F"], na.rm = TRUE),
+    mean_I   = mean(sim[sel, "I"],   na.rm = TRUE),
+    HEF = as.numeric(HEF_diff),
+    mean_Preds  = mean(sim[sel, "Preds"], na.rm = TRUE)
+  ))) } 
+
+
+sobol_fxn(ImmigrationPeriod = parameters["ImmigrationPeriod"],ImmigrationRate = parameters["ImmigrationRate"], FishingRate = parameters["FishingRate"], L1day = parameters["L1day"], d_W = parameters["d_W"])
+
+sobol_mapply_fxn = function(dt){
+  return(mapply(sobol_fxn, dt[, 1], dt[, 2], dt[, 3], dt[ ,4], dt[ ,5])) } #each column in the dataframe is a parameter vector 
+
+# mat = our inputs
+# result = our model outputs
+result = sobol_mapply_fxn(mat)
+df = as.data.frame(do.call(rbind, result))
+full.dt = data.table(mat, df)
+
+
+#plot outputs from full.dt
+
+
+
+ggplot(data= full.dt, aes(x = L1day, y = HEF)) + geom_point(color = "#BEBADA") +
+  labs(x = "Parasite Introduction Day", y = "Cumulative Exposure via Fish") + theme_classic(base_size = 25)
+
+ggplot(data= full.dt, aes(x = L1day, y = mean_I)) + geom_point() +
+  labs(x = "L1 Day", y = "Infectious Copepods") + theme_classic(base_size = 25)
+
+
+ggplot(data= full.dt, aes(x = d_W, y = HEF)) + geom_point() +
+  labs(x = "d_W", y = "Cumulative Exposure via Fish") + theme_classic(base_size = 25)
+
+
+
+plot_uncertainty(Y = full.dt$mean_L3F, N = N) + labs(y = "Mean L3F", x = "y")
+plot_uncertainty(Y = full.dt$mean_I, N = N) + labs(y = "Mean I", x = "y")
+plot_uncertainty(Y = full.dt$HEF, N = N) + labs(y = "HEF", x = "y")
+plot_uncertainty(Y = full.dt$mean_Preds, N = N) + labs(y = "Preds", x = "y")
+
+p1_list <- list()
+p2_list <- list()
+
+for (output in c("mean_L3F", "mean_I", "HEF","mean_Preds")) {
+  Yvals <- full.dt[[output]]
+  
+  # Scatter/facet plot
+  p1 <- sandra_plot_scatter(data = full.dt, N = N, Y = Yvals, params = pars, method = "bin")
+  print(p1)
+  
+  # Pairwise multiscatter
+  p2 <- sandra_plot_multiscatter(data = full.dt, N = N, Y = Yvals, params = pars, smpl = 2^13)
+  print(p2)
+  
+  p1_list[[output]] <- p1
+  p2_list[[output]] <- p2
+}
+
+
+L3Fp1 = p1_list[["mean_L3F"]]
+Ip1 = p1_list[["mean_I"]]
+HEFp1 = p1_list[["HEF"]]
+Predsp1 = p1_list[["mean_Preds"]]
+L3Fbivar = p2_list[["mean_L3F"]]
+Ibivar = p2_list[["mean_I"]]
+HEFbivar = p2_list[["HEF"]]
+Predsbivar = p2_list[["mean_Preds"]]
+
+L3Fp1
+Ip1
+HEFp1
+Predsp1
+
+L3Fbivar
+Ibivar
+HEFbivar
+Predsbivar
+
+indL3F <- sobol_indices(matrices = matrices, Y = df$mean_L3F, N = N, params = pars, 
+                     first = first, total = total, order = "fourth", boot = TRUE, R = R,
+                     parallel = "no", type = type, conf = conf)
+
+indL3F
+
+indI <- sobol_indices(matrices = matrices, Y = df$mean_I, N = N, params = pars, 
+                     first = first, total = total, order = "fourth", boot = TRUE, R = R,
+                     parallel = "no", type = type, conf = conf)
+
+indI
+
+indHEF <- sobol_indices(matrices = matrices, Y = df$HEF, N = N, params = pars, 
+                     first = first, total = total, order = "fourth", boot = TRUE, R = R,
+                     parallel = "no", type = type, conf = conf)
+
+indHEF
+
+
+indPreds <- sobol_indices(matrices = matrices, Y = df$mean_Preds, N = N, params = pars, 
+                     first = first, total = total, order = "fourth", boot = TRUE, R = R,
+                     parallel = "no", type = type, conf = conf)
+
+indPreds
+
+
+toplot.L3F <- subset(indL3F$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate"| parameters=="L1day" | parameters== "d_W")
+toplot.I <- subset(indI$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate"| parameters=="L1day"| parameters== "d_W")
+toplot.HEF <- subset(indHEF$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate"| parameters=="L1day"| parameters== "d_W")
+toplot.Preds <- subset(indPreds$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate" | parameters=="L1day"| parameters== "d_W")
+
+library(ggpointdensity)
+library(viridis)
+ggplot(data=full.dt,aes(x=mean_I,y=HEF)) + geom_pointdensity() + labs(x = "Mean Infectious Copepods",y = "Cumulative Mammalian Exposure to Fish") +
+  scale_color_viridis(option = "viridis")
+
+# test = subset(indL3F$results)
+# 
+# test$sensitivity <- factor(
+#   test$sensitivity,
+#   levels = c("Si", "Ti", "Sij", "Sijl", "Sijlm")
+# )
+# 
+# test$order_key <- as.numeric(test$sensitivity)
+# 
+# test$parameters <- reorder(test$parameters, test$order_key)
+# 
+# ggplot(test, aes(x=parameters, y=original, fill=sensitivity)) + 
+#   geom_bar(stat="identity", color="black", position="stack") +  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+indL3Fplot = indL3F$results
+
+indL3Fplot <- indL3Fplot %>%
+  mutate(variable = str_split(parameters, "\\.")) %>%  # Split into lists
+  unnest_wider(variable, names_sep = "")             # Expand into multiple columns
+
+indL3Fplot <- indL3Fplot %>%
+  mutate_all(~ str_replace_all(., "ImmigrationPeriod", "IP"))
+indL3Fplot <- indL3Fplot %>%
+  mutate_all(~ str_replace_all(., "ImmigrationRate", "IR"))
+indL3Fplot <- indL3Fplot %>%
+  mutate_all(~ str_replace_all(., "FishingRate", "FR"))
+indL3Fplot <- indL3Fplot %>%
+  mutate_all(~ str_replace_all(., "L1day", "L1"))
+indL3Fplot <- indL3Fplot %>%
+  mutate_all(~ str_replace_all(., "d_W", "DL3F"))
+
+
+df_long <- indL3Fplot %>%
+  pivot_longer(starts_with("variable"),
+               values_to = "param",
+               values_drop_na = TRUE) %>%
+  filter(param != "NA") %>%
+  select(param, sensitivity, parameters, original)
+
+df_long <- df_long %>%
+  mutate(original = as.numeric(original))
+
+df_plot <- df_long %>%
+  group_by(param, sensitivity, parameters) %>%
+  summarise(value = sum(original), .groups = "drop") %>%
+  mutate(parameters = gsub("\\.", " x ", parameters))
+
+library(RColorBrewer)
+ggplot(df_plot,
+       aes(param, value, fill = sensitivity)) +
+  geom_col(color = "white", linewidth = 0.3) +
+ geom_text(
+  aes(label = ifelse(sensitivity %in% c("Si", "Ti"), "", parameters)),
+  position = position_stack(vjust = 0.5),
+  size = 2,color = "white" )+ theme_classic() + scale_fill_brewer(palette = "Dark2")
+
+
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(RColorBrewer)
+all_set3_colors <- brewer.pal(12, "Set3")
+my_selected_colors <- all_set3_colors[c(5,7 )]
+
+
+
+make_sobol_plot <- function(ind_obj, outcome_label = "X", title_text = NULL) {
+  
+  df_plot <- ind_obj$results %>%
+    mutate(variable = str_split(parameters, "\\.")) %>%
+    unnest_wider(variable, names_sep = "") %>%
+    
+    pivot_longer(starts_with("variable"),
+                 values_to = "param",
+                 values_drop_na = TRUE) %>%
+    filter(param != "NA") %>%
+    select(param, sensitivity, parameters, original) %>%
+    
+    mutate(original = as.numeric(original)) %>%
+    
+    group_by(param, sensitivity, parameters) %>%
+    summarise(value = sum(original), .groups = "drop") %>%
+    mutate(parameters = gsub("\\.", " x ", parameters))
+  
+  df_plot = df_plot %>% filter(sensitivity == "Ti" | sensitivity == "Si")
+  
+  # Pivot wider to calculate Ti - Si
+    df_plot = df_plot %>% pivot_wider(names_from = sensitivity, values_from = value) %>%
+    mutate(Ti_Si = Ti - Si) %>%
+    # Pivot longer to have two bars: Si and Ti - Si
+    pivot_longer(cols = c(Si, Ti_Si), names_to = "sensitivity_corrected", values_to = "value") %>%
+    mutate(sensitivity_corrected = factor(sensitivity_corrected, levels = c("Si", "Ti_Si")))
+  
+  
+  ggplot(df_plot, aes(param, value, fill =  fct_rev(sensitivity_corrected))) +
+    geom_col() +
+    theme_classic(base_size = 20) +
+    scale_fill_manual(values = my_selected_colors, name = "Sensitivity Index",labels = c("Main Effect", "Interactions") ) +
+    ylim(0,1) + labs(x="Parameter", y = paste("Variance in", outcome_label,"explained by parameter")) +
+    scale_x_discrete(labels = c("Parasite Death Rate","Fishing Rate", "Immigration Period", "Immigration Rate", "Parasite Introduction Day")) + 
+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+
+
+p_L3F   <- make_sobol_plot(indL3F,  "L3F")
+p_I     <- make_sobol_plot(indI,   outcome_label = "infected copepods", "I")
+p_HEF   <- make_sobol_plot(indHEF, outcome_label = "exposure via fish", "HEF")
+p_Preds <- make_sobol_plot(indPreds,"Preds")
+
+p_L3F
+p_I
+p_HEF
+p_Preds
+
+#library(patchwork)
+
+#p_I + p_HEF + + plot_layout(guides = "collect")
+
+library(ggpubr)
+ggarrange(p_I,
+          p_HEF,
+          nrow=1,
+          ncol=2, common.legend=TRUE) 
+
+```
+
+
+
+```{r sobol indices graphs, fig.show = 'hold'}
+
+
+plot(indL3F)
+plot(indI)
+plot(indHEF)
+plot(indPreds)
+
+
+#make plots nicer
+indL3Fp1 <- ggplot(toplot.L3F, aes(x=parameters, y=original, fill=sensitivity)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  scale_fill_manual(name = "Effects", labels = c("Individual", "Total"), values=c("grey",
+                             "gray42")) +
+  geom_linerange(aes(ymin=original-std.error, ymax=original+std.error), linewidth= 1.5,
+                 position=position_dodge(.9)) +
+   theme(legend.position = "top", legend.justification = "center") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0,0)) +
+  labs(y = "Index Value", x = "") + ggtitle("L3s in Fish")
+
+indL3Fp1
+
+indIp2 <- ggplot(toplot.I, aes(x=parameters, y=original, fill=sensitivity)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  scale_fill_manual(name = "Effects", labels = c("Individual", "Total"), values=c("grey",
+                             "gray42")) +
+  geom_linerange(aes(ymin=original-std.error, ymax=original+std.error), linewidth= 1.5,
+                 position=position_dodge(.9)) +
+   theme(legend.position = "top", legend.justification = "center") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0,0)) +
+  labs(y = "Index Value", x = "") + ggtitle("Infectious Copepods")
+
+indIp2 
+
+indHEFp2 <- ggplot(toplot.HEF, aes(x=parameters, y=original, fill=sensitivity)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  scale_fill_manual(name = "Effects", labels = c("Individual", "Total"), values=c("grey",
+                             "gray42")) +
+  geom_linerange(aes(ymin=original-std.error, ymax=original+std.error), linewidth= 1.5,
+                 position=position_dodge(.9)) +
+   theme(legend.position = "top", legend.justification = "center") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0,0)) +
+  labs(y = "Index Value", x = "") + ggtitle("Human Exposure to Infected Fish")
+indHEFp2
+
+indPredsp2 <- ggplot(toplot.Preds, aes(x=parameters, y=original, fill=sensitivity)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  scale_fill_manual(name = "Effects", labels = c("Individual", "Total"), values=c("grey",
+                             "gray42")) +
+  geom_linerange(aes(ymin=original-std.error, ymax=original+std.error), linewidth= 1.5,
+                 position=position_dodge(.9)) +
+   theme(legend.position = "top", legend.justification = "center") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0,0)) +
+  labs(y = "Index Value", x = "") + ggtitle("Human Exposure to Infected Fish")
+
+indPredsp2
+
+#total effect indices,  account for interaction effects among our three parameters of interest.
+```
+
+
+
