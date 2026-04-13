@@ -260,16 +260,16 @@ set3_colors <- brewer.pal(12, "Set3")
 my_pal <- set3_colors[c(4,5)]
 
 
-#plot with Infectious copes, HEF, d_W = 0.01
+######Run simulations for immigration period, immigration rate, and parasite death rate####
 coeff <- 0.33
 
 p1 = ggplot(allresults, aes(x = ImmigrationPeriod)) +
   geom_line(aes(y = HEF, color = "HEF"), linewidth = 1.2) +
   geom_line(aes(y = I / coeff, color = "I"), linewidth = 1.2) +
   scale_y_continuous(
-    name = expression("Average Cumulative Fish Exposure ("*L^{-1}*")"),
+    name = expression("Cumulative Fish Exposure ("*L^{-1}*")"),
     sec.axis = sec_axis(~ . * coeff,
-                        name = expression("Average L3 Infected Copepods ("*L^{-1}*")"))
+                        name = expression("L3 Infected Copepods ("*L^{-1}*")"))
   ) +
   scale_color_manual(
     values = c("HEF" = my_pal[1], "I" = my_pal[2]),
@@ -291,7 +291,18 @@ p1
 
 
 #parasite death rate sim
-ImmigrationPeriod = 50
+parameters["latent_stages"] = 60
+parameters["latent_rate"] = 4.3
+parameters["lambda"] = 0.032*10
+parameters["d_W"] = 0.01#0.1 #on average GW in fish live 100 days 
+parameters["d_F"] = 0
+parameters["convEff"] = 0 #how many fish can you build by eating one adult, temper for nauplii and juveniles (mass of n/mass over a)
+parameters["ImmigrationRate"] =  0.05/50 #fish per liter per day 
+parameters["FishingRate"] = 0.05 #fish fished per liter per day (fishing effort) - the average fish is caught after 1 week (1/7)
+parameters["ImmigrationPeriod"] =  50
+parameters["L1day"] = 355
+
+#parameter to vary
 d_W = seq(0,0.1,by=0.001) 
 
 result_vectordW = numeric()
@@ -315,9 +326,9 @@ p2 = ggplot(allresultsdW, aes(x = d_W)) +
   geom_line(aes(y = HEF, color = "HEF"), linewidth = 1.2) +
   geom_line(aes(y = I / coeff, color = "I"), linewidth = 1.2) +
   scale_y_continuous(
-    name = expression("Average Cumulative Fish Exposure ("*L^{-1}*")"),
+    name = expression("Cumulative Fish Exposure ("*L^{-1}*")"),
     sec.axis = sec_axis(~ . * coeff,
-                        name = expression("Average L3 Infected Copepods ("*L^{-1}*")"))
+                        name = expression("L3 Infected Copepods ("*L^{-1}*")"))
   ) +
   scale_color_manual(
     values = c("HEF" = my_pal[1], "I" = my_pal[2]),
@@ -339,9 +350,19 @@ p2
 
 
 #immigration Rate (important to infecitous copepods)
-ImmigrationPeriod = 50
-d_W = 0.01
-ImmigrationRate = seq(0, 0.5/50, by = 0.005/50) 
+parameters["latent_stages"] = 60
+parameters["latent_rate"] = 4.3
+parameters["lambda"] = 0.032*10
+parameters["d_W"] = 0.01#0.1 #on average GW in fish live 100 days 
+parameters["d_F"] = 0
+parameters["convEff"] = 0 #how many fish can you build by eating one adult, temper for nauplii and juveniles (mass of n/mass over a)
+parameters["ImmigrationRate"] =  0.05/50 #fish per liter per day 
+parameters["FishingRate"] = 0.05 #fish fished per liter per day (fishing effort) - the average fish is caught after 1 week (1/7)
+parameters["ImmigrationPeriod"] =  50
+parameters["L1day"] = 355
+
+#paramter to vary
+ImmigrationRate = seq(0, 0.0171, by = 0.005/50) #0.015
 
 result_vectorImmigrationRate = numeric()
 mean_IImmigrationRate = numeric()
@@ -349,7 +370,7 @@ mean_IImmigrationRate = numeric()
 for(i in seq_along(ImmigrationRate)){
   parameters["ImmigrationRate"] <- ImmigrationRate[i]
   
-  sim = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 1e6)
+  sim = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 1e6) 
   
   result_vectorImmigrationRate[i] <- sim[4*365,"HEF"] - sim[3*365,"HEF"] #dim(sim)[1] last row of object sim 
   mean_IImmigrationRate[i] <- mean(sim[(3*365):(4*365),"I"])
@@ -364,9 +385,9 @@ p3 = ggplot(allresultsImmigrationRate, aes(x = ImmigrationRate)) +
   geom_line(aes(y = HEF, color = "HEF"), linewidth = 1.2) +
   geom_line(aes(y = I / coeff, color = "I"), linewidth = 1.2) +
   scale_y_continuous(
-    name = expression("Average Cumulative Fish Exposure ("*L^{-1}*")"),
+    name = expression("Cumulative Fish Exposure ("*L^{-1}*")"),
     sec.axis = sec_axis(~ . * coeff,
-                        name = expression("Average L3 Infected Copepods ("*L^{-1}*")"))
+                        name = expression("L3 Infected Copepods ("*L^{-1}*")"))
   ) +
   scale_color_manual(
     values = c("HEF" = my_pal[1], "I" = my_pal[2]),
@@ -392,7 +413,7 @@ ggarrange(p1,p2,p3, nrow=1,ncol=3)
 #Run simulations with d_W
 ###Immigration Period 
 allresults = data.frame(ImmigrationPeriod,HEF = result_vector)
-parameters["d_W"] = 0.01 #change for each sim 0,0.1,0.01
+parameters["d_W"] = 0.1 #change for each sim 0,0.1,0.01
 parameters["ImmigrationRate"] =  0.05/50
 Inits = c(N = 7500, J = 6000, A = 700, Exposed_values, I = 0, Preds = 0,L3F = 0, HEF = 0)/15
 timespan <- seq(0, 1825, by = 1)
@@ -431,11 +452,11 @@ p4 = ggplot(allresultsDW, aes(x=ImmigrationPeriod,y=Value, group = dW, color = d
   scale_color_manual(
     values = my_pal2
   ) + theme_classic(base_size=20,) +
-  labs(x = expression("Immigration Period"),y = expression("Average Cumulative Fish Exposure ("*L^{-1}*")"), color = "L3 Death Rate in Fish") +
-  theme(legend.position = c(0.7, 0.7))
+  labs(x = expression("Immigration Period"),y = expression("Cumulative Fish Exposure ("*L^{-1}*")"), color = "L3 Death Rate in Fish") +
+  theme(legend.position = c(0.9, 0.7))
 p4
 
-ggarrange(p1,p4,p2,p3, nrow=2,ncol=2)
+#ggarrange(p1,p4,p2,p3, nrow=2,ncol=2)
 
 library(patchwork)
-(p1 + p4) / (p2 + p3)
+(p1 + p4) / (p2 + p3) +  plot_annotation(theme = theme(plot.margin = margin(20, 20, 20, 20)))
