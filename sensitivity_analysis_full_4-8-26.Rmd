@@ -754,10 +754,10 @@ toplot.I <- subset(indI$results, parameters=="ImmigrationPeriod" | parameters=="
 toplot.HEF <- subset(indHEF$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate"| parameters=="L1day"| parameters== "d_W")
 toplot.Preds <- subset(indPreds$results, parameters=="ImmigrationPeriod" | parameters=="ImmigrationRate" | parameters=="FishingRate" | parameters=="L1day"| parameters== "d_W")
 
-library(ggpointdensity)
-library(viridis)
-ggplot(data=full.dt,aes(x=mean_I,y=HEF)) + geom_pointdensity() + labs(x = "Mean Infectious Copepods",y = "Cumulative Mammalian Exposure to Fish") +
-  scale_color_viridis(option = "viridis")
+#library(ggpointdensity)
+#library(viridis)
+#ggplot(data=full.dt,aes(x=mean_I,y=HEF)) + geom_pointdensity() + labs(x = "Mean Infectious Copepods",y = "Cumulative Mammalian Exposure to Fish") +
+  #scale_color_viridis(option = "viridis")
 
 # test = subset(indL3F$results)
 # 
@@ -859,8 +859,8 @@ make_sobol_plot <- function(ind_obj, outcome_label = "X", title_text = NULL) {
     geom_col() +
     theme_classic(base_size = 20) +
     scale_fill_manual(values = my_selected_colors, name = "Sensitivity Index",labels = c("Main Effect", "Interactions") ) +
-    ylim(0,1) + labs(x="Parameter", y = paste("Variance in", outcome_label,"explained by parameter")) +
-    scale_x_discrete(labels = c("Parasite Death Rate","Fishing Rate", "Immigration Period", "Immigration Rate", "Parasite Introduction Day")) + 
+    ylim(0,1) + labs(x="Parameter", y = paste("Proportion of variance in", outcome_label,"\nexplained by parameter")) +
+    scale_x_discrete(labels = c("Parasite Death Rate","Fishing Rate", "Immigration Period", "Immigration Rate", "Parasite Introduction Julian Date")) + 
 theme(axis.text.x = element_text(angle = 45, hjust = 1))
 }
 
@@ -872,6 +872,7 @@ p_HEF   <- make_sobol_plot(indHEF, outcome_label = "exposure via fish", "HEF")
 p_Preds <- make_sobol_plot(indPreds,"Preds")
 
 p_L3F
+
 p_I
 p_HEF
 p_Preds
