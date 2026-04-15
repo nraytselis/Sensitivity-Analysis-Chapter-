@@ -38,7 +38,7 @@ parameters["convEff"] = 0 #how many fish can you build by eating one adult, temp
 parameters["ImmigrationRate"] =  0.05/50 #fish per liter per day 
 parameters["FishingRate"] = 0.05 #fish fished per liter per day (fishing effort) - the average fish is caught after 1 week (1/7)
 parameters["ImmigrationPeriod"] = 50
-parameters["L1day"] = 25
+parameters["L1day"] = 355
 parameters = unlist(parameters)
 
 ####Set up Exposed States####
@@ -187,7 +187,7 @@ make_sobol_plot <- function(ind_obj,outcome_label = "X", title_text = NULL) {
   ggplot(df_plot, aes(param, value, fill =  fct_rev(sensitivity))) +
     geom_col() +
     theme_classic(base_size=20) +scale_fill_manual(values = my_selected_colors2, name = "Sensitivity Index") +
-    ylim(0,1) + labs(x="Parameter", y = paste("Variance in", outcome_label,"explained by parameter")) +
+    ylim(0,1) + labs(x="Parameter", y = paste("Proportion of variance in", outcome_label,"\nexplained by parameter")) +
     scale_x_discrete(labels = c("Parasite Death Rate","Fishing Rate", "Immigration Period", "Immigration Rate")) + 
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 }
@@ -206,12 +206,12 @@ ggarrange(p_I350,
           p_HEF350,
           nrow=1,
           ncol=2,
-          common.legend=TRUE, labels = c("Infected Copepods","Exposure via Fish"),label.x = 0.05, 
+          common.legend=TRUE, labels = c("Infected Copepods","Exposure via Fish"),label.x = 0.2, 
           label.y = 1) 
 
 
 
-####Run simulation with worst case scenario (day 355) across parasite death rate and immigration period####
+####Run simulation with worst case scenario (day 355) across parasite death rate,immigration period, immigration rate####
 
 parameters["latent_stages"] = 60
 parameters["latent_rate"] = 4.3
@@ -227,7 +227,7 @@ parameters["L1day"] = 355
 
 Inits = c(N = 7500, J = 6000, A = 700, Exposed_values, I = 0, Preds = 0,L3F = 0, HEF = 0)/15
 timespan <- seq(0, 1825, by = 1)
-ImmigrationPeriod = seq(0,130,by=1) 
+ImmigrationPeriod = seq(0,364,by=1) 
 
 result_vector = numeric()
 mean_I = numeric()
@@ -259,8 +259,6 @@ allresults = data.frame(ImmigrationPeriod,HEF = result_vector,I = mean_I)
 set3_colors <- brewer.pal(12, "Set3")
 my_pal <- set3_colors[c(4,5)]
 
-
-######Run simulations for immigration period, immigration rate, and parasite death rate####
 coeff <- 0.33
 
 p1 = ggplot(allresults, aes(x = ImmigrationPeriod)) +
@@ -362,7 +360,7 @@ parameters["ImmigrationPeriod"] =  50
 parameters["L1day"] = 355
 
 #paramter to vary
-ImmigrationRate = seq(0, 0.0171, by = 0.005/50) #0.015
+ImmigrationRate = seq(0, 0.03, by = 0.005/50) #0.015
 
 result_vectorImmigrationRate = numeric()
 mean_IImmigrationRate = numeric()
@@ -370,7 +368,7 @@ mean_IImmigrationRate = numeric()
 for(i in seq_along(ImmigrationRate)){
   parameters["ImmigrationRate"] <- ImmigrationRate[i]
   
-  sim = lsoda(y = Inits, times=timespan, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 1e6) 
+  sim = lsoda(y = Inits, times=timespan, hmax = 0.1, parms = parameters, func="compute_derivatives", dllname = "Fishing_Flooding_Model", initfunc="initmod", maxsteps = 1e6) 
   
   result_vectorImmigrationRate[i] <- sim[4*365,"HEF"] - sim[3*365,"HEF"] #dim(sim)[1] last row of object sim 
   mean_IImmigrationRate[i] <- mean(sim[(3*365):(4*365),"I"])
@@ -413,11 +411,11 @@ ggarrange(p1,p2,p3, nrow=1,ncol=3)
 #Run simulations with d_W
 ###Immigration Period 
 allresults = data.frame(ImmigrationPeriod,HEF = result_vector)
-parameters["d_W"] = 0.1 #change for each sim 0,0.1,0.01
+parameters["d_W"] = 0.01 #change for each sim 0,0.1,0.01
 parameters["ImmigrationRate"] =  0.05/50
 Inits = c(N = 7500, J = 6000, A = 700, Exposed_values, I = 0, Preds = 0,L3F = 0, HEF = 0)/15
 timespan <- seq(0, 1825, by = 1)
-ImmigrationPeriod = seq(0,130,by=1) 
+ImmigrationPeriod = seq(0,364,by=1) 
 
 result_vector = numeric()
 mean_I = numeric()
